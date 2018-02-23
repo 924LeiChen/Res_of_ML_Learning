@@ -143,3 +143,161 @@ for row in test_df.itertuples():
 	targets.append(actual)
 
 print('测试结果的rmse为 %.4f' % rmse(np.array(predictions), np.array(targets)))
+
+print('------user-based协同过滤算法（相似度未归一化）------')
+
+def predict_userCF(user, item, k=10):
+	nzero = ratings[user].nonzero()[0]
+	baseline = user_mean + item_mean[item] - all_mean
+	prediction = ratings[nzero, item].dot(user_similarity[user, nzero]) \
+					/ sum(user_similarity[user, nzero])
+	# 冷启动问题，该item暂时没有评分
+	if np.isnan(prediction):
+		prediction = baseline[user]
+	return prediction
+
+print('loading test set...')
+test_df = pd.read_csv(testset_file, sep='\t', names=names)
+predictions=[]
+targets=[]
+print('scale of test set is %d' % len(test_df))
+print('using user-based cf algorithm to do the prediction...')
+for row in test_df.itertuples():
+	user, item, actual = row[1] - 1, row[2] - 1, row[3]
+	predictions.append(predict_userCF(user, item))
+	targets.append(actual)
+
+print('测试结果的rmse为 %.4f' % rmse(np.array(predictions), np.array(targets)))
+
+print('------the combination of user-based cf algorithm and baseline algorithm------')
+
+def predict_usercf_baseline(user, item, k=10):
+	nzero = ratings[:, item].nonzero()[0]
+	baseline = item_mean[item] + user_mean - all_mean
+	prediction = (ratings[nzero, item] - baseline[nzero]).dot(user_similarity[user, nzero]) \
+					/ sum(user_similarity[user, nzero]) + baseline[user]
+	if np.isnan(prediction):
+		prediction = baseline[user]
+	return prediction
+
+print('loading test set...')
+test_df = pd.read_csv(testset_file, sep='\t', names=names)
+predictions=[]
+targets=[]
+print('scale of test set is %d' % len(test_df))
+print('using user-based cf algorithm with baseline algorithm to do the prediction...')
+for row in test_df.itertuples():
+	user, item, actual = row[1] - 1, row[2] - 1, row[3]
+	predictions.append(predict_usercf_baseline(user, item))
+	targets.append(actual)
+
+print('测试结果的rmse为 %.4f' % rmse(np.array(predictions), np.array(targets)))
+
+print('------item-based cf alg with baseline------')
+
+def predict_biasCF(user, item, k=100):
+	nzero = ratings[user].nonzero()[0]
+	baseline = item_mean + user_mean[user] - all_mean
+	prediction = (ratings[user, nzero] - baseline[nzero]).dot(item_similarity[item, nzero]) \
+						/ sum(item_similarity[item, nzero]) + baseline[item]
+	if prediction > 5:
+		prediction = 5
+	if prediction < 1:
+		prediction = 1 
+	return prediction 
+
+print('loading test set...')
+test_df = pd.read_csv(testset_file, sep='\t', names=names)
+predictions=[]
+targets=[]
+print('scale of test set is %d' % len(test_df))
+print('using item-based cf algorithm with baseline algorithm to do the prediction...')
+for row in test_df.itertuples():
+	user, item, actual = row[1] - 1, row[2] - 1, row[3]
+	predictions.append(predict_biasCF(user, item))
+	targets.append(actual)
+
+print('测试结果的rmse为 %.4f' % rmse(np.array(predictions), np.array(targets)))
+
+print('------top-k cf(item-based + baseline)------')
+
+def predict_topkCF(user, item, k=10):
+	nzero = ratings[user].nonzero()[0]
+	baseline = item_mean + user_mean[user] - all_mean
+	choice = nzero[item_similarity[item, nzero].argsort()[::-1][:k]]
+	prediction = (ratings[user, choice] - baseline[choice]).dot(item_similarity[item, choice]) \
+						/ sum(item_similarity[item, choice]) + baseline[item]
+	if prediction > 5:
+		prediction = 5
+	if prediction < 1:
+		prediction = 1 
+	return prediction 
+
+print('loading test set...')
+test_df = pd.read_csv(testset_file, sep='\t', names=names)
+predictions=[]
+targets=[]
+print('scale of test set is %d' % len(test_df))
+print('using item-based cf algorithm with baseline algorithm to do the prediction...')
+k = 20
+print('the k is %d' % k)
+for row in test_df.itertuples():
+	user, item, actual = row[1] - 1, row[2] - 1, row[3]
+	predictions.append(predict_topkCF(user, item, k))
+	targets.append(actual)
+
+print('测试结果的rmse为 %.4f' % rmse(np.array(predictions), np.array(targets)))
+
+print('------baseline + item-based + topk + normalized matrix------')
+
+def cal_similarity_norm(ratings, kind, epsilon=1e-9):
+	if kind == 'user':
+		# 对同一个user的打分归一化
+		rating_user_diff = ratings.copy()
+		for i in range(ratings.shape[0]):
+			nzero = ratings[i].nonzero()
+			rating_user_diff[i][nzero] = ratings[i][nzero] - user_mean[i]
+		sim = rating_user_diff.dot(rating_user_diff.T) + epsilon
+	elif kind == 'item':
+		# 对同一个item的打分归一化
+		rating_item_diff = ratings.copy()
+		for j in range(ratings.shape[1]):
+			nzero = ratings[:,j].nonzero()
+			rating_item_diff[:,j][nzero] = ratings[:,j][nzero] - item_mean[j]
+		sim = rating_item_diff.dot(rating_item_diff.T) + epsilon
+	norms = np.array([np.sqrt(np.diagonal(sim))])
+	return (sim / norms / norms.T)
+
+print('计算归一化的相似度矩阵...')
+user_similarity_norm = cal_similarity_norm(ratings, kind='user')
+item_similarity_norm = cal_similarity_norm(ratings, kind='item')
+print('calculation finished')
+print('example of similarity matrix: (item-item)')
+print(np.round_(item_similarity_norm[:10, :10], 3))
+
+def predict_norm_cf(user, item, k=20):
+	nzero = ratings[user].nonzero()[0]
+	baseline = item_mean + user_mean[user] - all_mean
+	choice = nzero[item_similarity_norm[item, nzero].argsort()[::-1][:k]]
+	prediction = (ratings[user, choice] - baseline[choice]).dot(item_similarity_norm[item, choice]) \
+					/ sum(item_similarity_norm[item, choice]) + baseline[item]
+	if prediction > 5:
+		prediction = 5
+	if prediction < 1:
+		prediction = 1 
+	return prediction 
+
+print('loading test set...')
+test_df = pd.read_csv(testset_file, sep='\t', names=names)
+predictions =[]
+targets=[]
+print('scale of test set is %d' % len(test_df))
+print('using baseline + item-based + topk + normalized matrix to do the prediction...')
+k = 20
+print('the k is %d' % k)
+for row in test_df.itertuples():
+	user, item, actual = row[1] - 1, row[2] - 1, row[3]
+	predictions.append(predict_norm_cf(user, item, k))
+	targets.append(actual)
+
+print('测试结果的rmse为 %.4f' % rmse(np.array(predictions), np.array(targets)))
